@@ -1,3 +1,6 @@
 ROLES=('operator','supervisor','viewer')
 SAMPLE_STATES=('planned','sealed','broken','transferred','cancelled')
-INTERPRETATION_STATES=('queued','ready','failed','confirmed')
+INTERPRETATION_STATES=('queued','ready','failed','confirmed','withdrawn')
+INTERPRETATION_KINDS=('gmm','lab')
+CANDIDATE_STATES=('computing','pending','undecided','confirmed','invalidated')
+LAB_REGISTRATION_STATES=('registered','invalidated')

@@ -4,6 +4,7 @@ class Login(Clean):email:str;password:str
 class HoleInput(Clean):
     code:str=Field(min_length=2,max_length=40)
     site:str=Field(min_length=2,max_length=120)
+    work_area:str=Field(default='',max_length=120)
     total_depth:float=Field(gt=0,le=1000)
     cut_quota:float=Field(gt=0,le=100)
 class RunInput(Clean):
@@ -31,6 +32,16 @@ class LayerInput(Clean):
     end_m:float=Field(gt=0)
     lithology:str=Field(min_length=2,max_length=100)
     contact_note:str=Field(min_length=8,max_length=600)
+class LabReading(Clean):
+    density:float=Field(ge=1,le=5)
+    susceptibility:float=Field(ge=0,le=1000)
+    velocity:float=Field(ge=500,le=9000)
+class LabRegisterInput(Clean):
+    sample_id:int
+    lithology:str=Field(min_length=2,max_length=100)
+    readings:list[LabReading]=Field(min_length=1,max_length=50)
+    basis:str=Field(min_length=8,max_length=600)
+class CandidateReason(Clean):reason:str=Field(min_length=8,max_length=600)
 class Layers(Clean):layers:list[LayerInput]=Field(min_length=1,max_length=40)
 class SampleInput(Clean):
     borehole_id:int

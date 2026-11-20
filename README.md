@@ -22,9 +22,14 @@ docker compose up -d --build --wait
 | 层段候选与人工接触面 | Interpretation queued→ready/failed→confirmed；人工层段从孔口连续到终孔、每层附依据；一孔只能一份已确认解释 |
 | 取样配额与区间冲突 | SampleInterval 必须落在同一已确认层，不穿缺段；破坏性切样不可重叠且合计不超孔配额；planned 可改或取消，封签后不可改 |
 | 样袋封签及交接 | planned→sealed→transferred；破签转 broken，只能带原因重封；Seal.previous_id 保存旧链，Custody 只接收当前完整封签且一次一回执 |
+| 化验岩性登记与投票 | 已签收且封签完好的样袋一袋一登记（化验岩性、袋内读数、依据）；新孔用**同工区**有效化验样袋的物性比对，整袋只算一票；票数接近的测点留待判。破签或撤回化验后，引用它的候选立即失效并拒绝确认；已确认解释保留快照与原证据，只标记来源失效。层段解释页可查引用样袋、判得岩性与待判理由 |
 | 柱状图版本冻结 | draft→frozen；检查进尺、每米中心测点或明示缺段、缺段说明、层面、所有有效样品交接；冻结保存完整快照并关闭整孔写入 |
 
 取样与配额写入、封签、交接、冻结统一先锁父钻孔，数据库唯一约束作为补充。并发验收主动持有父锁，让两次请求确实竞争，避免仅顺序调用。
+
+化验岩性链路（`backend/src/lab_service.py`）的加锁顺序统一为「父钻孔 → 解释 → 候选 → 化验登记」：破签/撤回、计算回包和确认共用该顺序。worker 回包先锁候选行再看来源登记，发现任一引用样袋已破签/撤回就把候选钉死在 `invalidated`，迟到的计算不会让候选重新可用；确认时逐条复核引用登记，失效即拒绝。
+
+化验相关接口：`POST /lab/registrations`（登记）、`POST /lab/registrations/{id}/withdraw`（主管撤回）、`POST /interpretations/lab`（开立研判）、`POST /interpretations/{id}/confirm`（主管确认，与 GMM 共用）、`GET /interpretations/{id}/evidence`（引用样袋、判得岩性与待判理由）。
 
 ## 演示一天
 
@@ -36,6 +41,7 @@ docker compose up -d --build --wait
 6. 新样封签后不再允许改区间。主管报告破签后，重新封签、重新交接，历史回执不被覆盖。
 7. 建柱状图草稿；未说明缺芯或未交接样品会阻止冻结，补说明/补交接后可重试同一草稿。
 8. 冻结版本查看孔深、人工岩性、缺芯带与样品标记；快照保留测点、模型证据、全部封签及交接链。
+9. BH-30 是已签收化验样板（两袋粉砂岩 + 一袋破签失效）。新孔 BH-99 在层段页点「用同工区化验样袋研判岩性」，逐点投票得岩性并可查引用样袋；对 BH-30 的样板报告破签或主管撤消化验，引用它的候选立即失效，已确认解释仍能查原证据。
 
 ## 真实 Python 算法
 
@@ -45,7 +51,7 @@ worker 经 Redis 队列执行 `layer_model.py`。密度、磁化率、声速先�
 
 ## 结构和开发
 
-`backend/src/models.py` 定义关系表；`schemas.py` 提供严格校验与非有限值拒绝；五个领域 service 承担约束；`routes.py` 管接口与角色；`layer_model.py` / `worker.py` 管计算；`common.py` 管父锁与审计。`middlewares.py` 提供请求追踪及异常恢复两层中间件。`frontend/src/pages/` 六页分别实现领域任务，`components/logbook.js` 共用孔头、深度带、徽标等组件，`constants.js` 集中角色和状态，`utils/` 管请求及转义。原生 HTML/CSS/ES modules，无前端框架。
+`backend/src/models.py` 定义关系表；`schemas.py` 提供严格校验与非有限值拒绝；六个领域 service 承担约束（`drilling_service` / `strata_service` / `sample_service` / `custody_service` / `revision_service` / `lab_service`）；`routes.py` 管接口与角色；`layer_model.py` / `worker.py` 管计算；`common.py` 管父锁与审计。`middlewares.py` 提供请求追踪及异常恢复两层中间件。`frontend/src/pages/` 六页分别实现领域任务，`components/logbook.js` 共用孔头、深度带、徽标等组件，`constants.js` 集中角色和状态，`utils/` 管请求及转义。原生 HTML/CSS/ES modules，无前端框架。
 
 ```bash
 docker compose exec -T backend python /app/scripts/seed_demo.py

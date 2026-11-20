@@ -2,6 +2,7 @@ from sqlalchemy import select
 from fastapi import HTTPException
 from .models import SampleInterval,Seal,Custody
 from .common import hole,get,pack,audit,now
+from . import lab_service as lab
 
 def context(s,id):
     ref=get(s,SampleInterval,id);hole(s,ref.borehole_id);return get(s,SampleInterval,id,True)
@@ -12,10 +13,15 @@ def seal(s,p,u):
     if old and (old.state!='broken' or len(p.reason)<8):raise HTTPException(409,'重封须保留破签旧链并写至少8字重封依据')
     x=Seal(sample_id=sample.id,code=p.code,previous_id=old.id if old else None,reason=p.reason,sealed_by=u['email'],snapshot=pack(sample));s.add(x);sample.state='sealed';s.flush();audit(s,u,'样袋封签 '+p.code);return pack(x)
 def break_seal(s,id,p,u):
-    ref=get(s,Seal,id);sample=context(s,ref.sample_id);x=get(s,Seal,id,True)
+    ref=get(s,Seal,id);preview=get(s,SampleInterval,ref.sample_id)
+    # 先锁父钻孔，再锁封签与化验来源，和计算/确认共用同一加锁顺序。
+    hole(s,preview.borehole_id);sample=get(s,SampleInterval,ref.sample_id,True);x=get(s,Seal,id,True)
     latest=s.scalar(select(Seal.id).where(Seal.sample_id==sample.id).order_by(Seal.id.desc()))
     if x.state!='intact' or latest!=x.id:raise HTTPException(409,'仅当前完整封签可报告破签')
-    x.state='broken';x.reason=p.reason;sample.state='broken';audit(s,u,'报告破签 '+x.code);return pack(x)
+    regs=lab.registrations_for_seal(s,x.id)
+    x.state='broken';x.reason=p.reason;sample.state='broken'
+    lab.propagate_invalid(s,regs,'封签 '+x.code+' 已破签：'+p.reason,u)
+    audit(s,u,'报告破签 '+x.code);return pack(x)
 def handover(s,p,u):
     ref=get(s,Seal,p.seal_id);sample=context(s,ref.sample_id);x=get(s,Seal,p.seal_id,True)
     if x.state!='intact' or sample.state!='sealed':raise HTTPException(409,'当前样袋须封签完整且未移交，破签须重封')

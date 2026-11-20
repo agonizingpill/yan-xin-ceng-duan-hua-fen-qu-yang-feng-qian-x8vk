@@ -24,7 +24,11 @@ def freeze(s,id,u):
         depth+=1
     i=s.scalar(select(Interpretation).where(Interpretation.borehole_id==h.id,Interpretation.state=='confirmed'))
     if not i:raise HTTPException(409,'须主管确认人工层段')
+    if i.kind=='lab' and i.source_invalidated:raise HTTPException(409,'化验岩性引用样袋已破签或化验已撤回，须重新研判后再冻结')
+    # 待判测点不生成岩性，层段会留空，不能凭未定解释冻结成果。
+    if i.kind=='lab' and s.scalar(select(LabCandidate.id).where(LabCandidate.interpretation_id==i.id,LabCandidate.status.in_(['pending','undecided','computing','invalidated']))):raise HTTPException(409,'化验岩性仍有待判测点或失效候选，须先处置再冻结')
     samples=s.scalars(select(SampleInterval).where(SampleInterval.borehole_id==h.id,SampleInterval.state!='cancelled')).all()
     if any(v.state!='transferred'for v in samples):raise HTTPException(409,'尚有未完整封签交接样袋，不能冻结')
     ids=[v.id for v in samples];seals=s.scalars(select(Seal).where(Seal.sample_id.in_(ids))).all()if ids else[];sealids=[v.id for v in seals];cust=s.scalars(select(Custody).where(Custody.seal_id.in_(sealids))).all()if sealids else[]
-    x.snapshot={'borehole':pack(h),'runs':[pack(v)for v in runs],'readings':[pack(v)for v in points],'missing':[pack(v)for v in missing],'interpretation':pack(i),'strata':[pack(v)for v in s.scalars(select(Stratum).where(Stratum.interpretation_id==i.id))],'samples':[pack(v)for v in samples],'seals':[pack(v)for v in seals],'custodies':[pack(v)for v in cust]};x.state='frozen';x.frozen_by=u['email'];h.state='frozen';audit(s,u,'冻结柱状图 '+h.code+' '+x.version);return pack(x)
+    from .lab_service import evidence_report
+    x.snapshot={'borehole':pack(h),'runs':[pack(v)for v in runs],'readings':[pack(v)for v in points],'missing':[pack(v)for v in missing],'interpretation':pack(i),'strata':[pack(v)for v in s.scalars(select(Stratum).where(Stratum.interpretation_id==i.id))],'interpretation_evidence':evidence_report(s,i.id),'samples':[pack(v)for v in samples],'seals':[pack(v)for v in seals],'custodies':[pack(v)for v in cust]};x.state='frozen';x.frozen_by=u['email'];h.state='frozen';audit(s,u,'冻结柱状图 '+h.code+' '+x.version);return pack(x)

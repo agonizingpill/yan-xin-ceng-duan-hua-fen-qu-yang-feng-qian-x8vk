@@ -3,14 +3,14 @@ from sqlalchemy import select
 from .database import Session
 from .security import current,allow
 from .common import pack,audit,hole
-from .models import Borehole,CoreRun,Reading,MissingInterval,Interpretation,Stratum,SampleInterval,Seal,Custody,ColumnRevision,Audit
-from .schemas import HoleInput,RunInput,ReadingInput,MissingInput,Reason,BoreholeRef,Layers,SampleInput,SealInput,CustodyInput,RevisionInput
-from . import drilling_service as drilling,strata_service as strata,sample_service as sampling,custody_service as custody,revision_service as revision
+from .models import Borehole,CoreRun,Reading,MissingInterval,Interpretation,Stratum,SampleInterval,Seal,Custody,ColumnRevision,Audit,LabRegistration,LabCandidate,LabCandidateRef
+from .schemas import HoleInput,RunInput,ReadingInput,MissingInput,Reason,BoreholeRef,Layers,SampleInput,SealInput,CustodyInput,RevisionInput,LabRegisterInput,CandidateReason
+from . import drilling_service as drilling,strata_service as strata,sample_service as sampling,custody_service as custody,revision_service as revision,lab_service as lab
 router=APIRouter()
 def permissions(u,controlled=False):allow(u,*(['supervisor']if controlled else['operator','supervisor']))
 @router.get('/register')
 def register(u=Depends(current)):
-    with Session()as s:return {name:[pack(x)for x in s.scalars(select(cls).order_by(cls.id))]for name,cls in [('boreholes',Borehole),('runs',CoreRun),('readings',Reading),('missing',MissingInterval),('interpretations',Interpretation),('strata',Stratum),('samples',SampleInterval),('seals',Seal),('custodies',Custody),('revisions',ColumnRevision)]}
+    with Session()as s:return {name:[pack(x)for x in s.scalars(select(cls).order_by(cls.id))]for name,cls in [('boreholes',Borehole),('runs',CoreRun),('readings',Reading),('missing',MissingInterval),('interpretations',Interpretation),('strata',Stratum),('samples',SampleInterval),('seals',Seal),('custodies',Custody),('revisions',ColumnRevision),('lab_registrations',LabRegistration),('lab_candidates',LabCandidate),('lab_candidate_refs',LabCandidateRef)]}
 @router.get('/audit')
 def history(u=Depends(current)):
     with Session()as s:return [pack(x)for x in s.scalars(select(Audit).order_by(Audit.id.desc()).limit(35))]
@@ -77,6 +77,26 @@ def revise(id:int,p:SampleInput,u=Depends(current)):
 def cancel(id:int,u=Depends(current)):
     permissions(u)
     with Session.begin()as s:return sampling.cancel(s,id,u)
+@router.post('/lab/registrations')
+def lab_register(p:LabRegisterInput,u=Depends(current)):
+    permissions(u)
+    with Session.begin()as s:return lab.register(s,p,u)
+@router.post('/lab/registrations/{id}/withdraw')
+def lab_withdraw(id:int,p:CandidateReason,u=Depends(current)):
+    permissions(u,True)
+    with Session.begin()as s:return lab.withdraw(s,id,p,u)
+@router.post('/interpretations/lab')
+def lab_interpret(p:BoreholeRef,u=Depends(current)):
+    permissions(u)
+    with Session.begin()as s:x=lab.start(s,p,u)
+    from .main import redis
+    try:redis.rpush('core-interpret',x['id'])
+    except Exception:
+        from .common import get
+        with Session.begin()as s:y=get(s,Interpretation,x['id'],True);y.state='failed';y.error='队列不可用，请撤销后重试'
+        from fastapi import HTTPException
+        raise HTTPException(503,'队列不可用，失败已留档，可撤销后重试')
+    return x
 @router.post('/seals')
 def seal(p:SealInput,u=Depends(current)):
     permissions(u)
@@ -97,3 +117,7 @@ def new_revision(p:RevisionInput,u=Depends(current)):
 def freeze(id:int,u=Depends(current)):
     permissions(u,True)
     with Session.begin()as s:return revision.freeze(s,id,u)
+@router.get('/interpretations/{id}/evidence')
+def interpretation_evidence(id:int,u=Depends(current)):
+    from .lab_service import evidence_report
+    with Session()as s:return evidence_report(s,id)
